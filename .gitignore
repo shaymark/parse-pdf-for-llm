@@ -7,3 +7,6 @@ build/
 dist/
 .DS_Store
 .claude/settings.local.json
+# Local-only test inputs (do not publish)
+OneDrive_*.zip
+Share For Shay/
