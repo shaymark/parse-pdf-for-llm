@@ -2,3 +2,8 @@ out/
 __pycache__/
 *.pyc
 .venv/
+*.egg-info/
+build/
+dist/
+.DS_Store
+.claude/settings.local.json

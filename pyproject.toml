@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parse-pdf-for-llm"
+version = "0.1.0"
+description = "Parse a PDF (text + tables + figures) into an agent-friendly folder structure that LLMs can route through cheaply."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Shay Mark", email = "shaymark@gmail.com" }]
+keywords = ["pdf", "llm", "claude", "agent", "datasheet", "rag", "extraction"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Markup",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "pymupdf>=1.24",
+    "pymupdf4llm>=0.0.17",
+]
+
+[project.optional-dependencies]
+# Vision-LLM features (--vision-tables, --describe-figures) need a local Ollama
+# install plus a vision model (default: qwen2.5vl:7b — `ollama pull qwen2.5vl:7b`).
+vision = ["ollama>=0.3"]
+
+[project.urls]
+Homepage = "https://github.com/shaymark/parse-pdf-for-llm"
+Issues = "https://github.com/shaymark/parse-pdf-for-llm/issues"
+
+[project.scripts]
+parse-pdf = "parse_pdf:main"
+
+[tool.setuptools]
+py-modules = ["parse_pdf"]
