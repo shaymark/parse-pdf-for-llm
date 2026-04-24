@@ -47,6 +47,24 @@ ollama pull qwen2.5vl:7b
 Tested on Apple M4 Pro (works for 8B-class vision models). Should also work on
 Linux and on x86 with a discrete GPU.
 
+### No-install option (just the script)
+
+You don't have to install the pip package at all. The whole tool is one
+self-contained file:
+[`.claude/skills/parse-pdf/parse_pdf.py`](.claude/skills/parse-pdf/parse_pdf.py).
+
+Download it, install the two runtime deps, and run it directly:
+
+```bash
+curl -O https://raw.githubusercontent.com/shaymark/parse-pdf-for-llm/main/.claude/skills/parse-pdf/parse_pdf.py
+pip install pymupdf pymupdf4llm                    # core deps
+pip install ollama                                 # only if you want --vision-tables / --describe-figures
+python parse_pdf.py path/to/file.pdf --all
+```
+
+Every `parse-pdf …` command in the rest of this README works the same way as
+`python parse_pdf.py …`.
+
 ## Usage
 
 ### Parse a PDF
