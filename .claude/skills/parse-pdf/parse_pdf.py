@@ -10,8 +10,11 @@ Strategy:
        page_<N>_img_<i>.<ext>   Embedded images (schematics, diagrams)
 
 Usage:
-  python parse_pdf.py <pdf_path> [--pages 14] [--pages 10-20] [--all]
-  python parse_pdf.py <pdf_path> --search "GPIO_DISP_B2_08"
+  parse-pdf <pdf_path> [--pages 14] [--pages 10-20] [--all]
+  parse-pdf <pdf_path> --search "GPIO_DISP_B2_08"
+
+(Or `python parse_pdf.py ...` if you prefer to invoke the bundled script
+directly without installing the pip package.)
 """
 
 from __future__ import annotations

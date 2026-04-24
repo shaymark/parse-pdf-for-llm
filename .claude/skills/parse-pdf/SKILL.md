@@ -26,14 +26,26 @@ Optional flags worth adding when available:
 - `--vision-tables` — re-extract every table from its rendered PNG using a local vision LLM (Ollama + `qwen2.5vl:7b`). Much better empty-cell handling for spec tables (Min/Typ/Max), and correctly handles vertically merged cells. Adds ~10-30s per table.
 - `--describe-figures` — generate vision-LLM descriptions of every figure so you can "read" them without loading the PNG.
 
-If `parse-pdf` is not on PATH, fall back to:
+If `parse-pdf` is not on PATH, the skill folder ships a bundled copy of the
+script — invoke it directly:
+
 ```bash
-python parse_pdf.py <path/to/file.pdf> --all
+python "${CLAUDE_PLUGIN_ROOT:-$HOME/.claude/skills/parse-pdf}/parse_pdf.py" <path/to/file.pdf> --all
 ```
-or install:
+
+Or install once and forget:
+
 ```bash
 pip install parse-pdf-for-llm           # core
 pip install parse-pdf-for-llm[vision]   # adds Ollama for --vision-tables
+```
+
+The script needs `pymupdf` and `pymupdf4llm` (always) and `ollama` (only for the
+vision flags). If those aren't installed, install them first:
+
+```bash
+pip install pymupdf pymupdf4llm           # core deps
+pip install ollama                        # only if using --vision-tables / --describe-figures
 ```
 
 ## Step 2 — Read the output's README first

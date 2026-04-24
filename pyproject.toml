@@ -40,4 +40,8 @@ Issues = "https://github.com/shaymark/parse-pdf-for-llm/issues"
 parse-pdf = "parse_pdf:main"
 
 [tool.setuptools]
+# The script lives inside the Claude Code Skill folder so the skill is a
+# self-contained drop-in (`cp -r .claude/skills/parse-pdf ~/.claude/skills/`).
+# pyproject.toml just tells setuptools where to find it for the pip package.
+package-dir = { "" = ".claude/skills/parse-pdf" }
 py-modules = ["parse_pdf"]
