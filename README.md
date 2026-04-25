@@ -30,7 +30,40 @@ The emitted `README.md` documents the file map for that specific PDF — the age
 reads it and routes its queries (table lookup → `table_NN_*.md`, signal lookup →
 grep `signals.csv`, etc.) without ever opening `document.md`.
 
-## Install
+## Desktop GUI (no terminal needed)
+
+If you don't want to touch a terminal, grab the prebuilt app for your OS
+from the [latest release](https://github.com/shaymark/parse-pdf-for-llm/releases/latest):
+
+| OS | Download |
+|---|---|
+| macOS (Apple Silicon) | `parse-pdf-gui-macos-arm64.zip` |
+| macOS (Intel) | `parse-pdf-gui-macos-x86_64.zip` |
+| Linux (x86_64) | `parse-pdf-gui-linux-x86_64.tar.gz` |
+| Windows (x86_64) | `parse-pdf-gui-windows-x86_64.zip` |
+
+Each download is a single self-contained binary (~60–80 MB). No Python
+install needed. Drop a PDF onto the window, tick the options you want,
+press **Run**, watch the log scroll. The bundled `parse_pdf.py` is editable
+from inside the app (View / Edit Script…) so you can tweak the script
+without re-downloading.
+
+Builds are unsigned. On macOS first launch: right-click the app → **Open**
+→ confirm. On Windows: SmartScreen → **More info** → **Run anyway**.
+
+> **Apple Silicon note**: drag-and-drop relies on a native `tkdnd` library
+> that upstream `tkinterdnd2` ships only as an x86_64 binary, so DnD is
+> disabled on arm64 Macs. The drop zone falls back to a click-to-browse
+> button — everything else works the same.
+
+If you already have Python, the GUI is also a tiny pip install (<1 MB):
+
+```bash
+pip install "parse-pdf-for-llm[gui,vision]"
+parse-pdf-gui
+```
+
+## Install (CLI)
 
 ```bash
 pip install parse-pdf-for-llm           # core

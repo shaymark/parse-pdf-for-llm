@@ -31,6 +31,15 @@ dependencies = [
 # Vision-LLM features (--vision-tables, --describe-figures) need a local Ollama
 # install plus a vision model (default: qwen2.5vl:7b — `ollama pull qwen2.5vl:7b`).
 vision = ["ollama>=0.3"]
+# Desktop GUI wrapper (`parse-pdf-gui`). tkinter itself is stdlib; tkinterdnd2
+# adds OS-native drag-and-drop, platformdirs gives us a cross-platform config dir.
+gui = [
+    "tkinterdnd2>=0.4",
+    "platformdirs>=4",
+    # macOS-only: needed so the Tk window comes to the foreground when
+    # launched from a .app bundle (NSApp activation).
+    "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
+]
 
 [project.urls]
 Homepage = "https://github.com/shaymark/parse-pdf-for-llm"
@@ -38,10 +47,12 @@ Issues = "https://github.com/shaymark/parse-pdf-for-llm/issues"
 
 [project.scripts]
 parse-pdf = "parse_pdf:main"
+parse-pdf-gui = "gui.app:main"
 
 [tool.setuptools]
-# The script lives inside the Claude Code Skill folder so the skill is a
+# The CLI script lives inside the Claude Code Skill folder so the skill is a
 # self-contained drop-in (`cp -r .claude/skills/parse-pdf ~/.claude/skills/`).
-# pyproject.toml just tells setuptools where to find it for the pip package.
-package-dir = { "" = ".claude/skills/parse-pdf" }
+# The `gui` package lives at the repo root. We map both into the install.
+package-dir = { "" = ".claude/skills/parse-pdf", "gui" = "gui" }
 py-modules = ["parse_pdf"]
+packages = ["gui"]
