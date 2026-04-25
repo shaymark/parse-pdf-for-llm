@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Image → Markdown (Ollama)</title>
+<title>Image → Markdown / Description (Ollama)</title>
 <style>
   :root { --bg:#0f1115; --panel:#161a22; --border:#2a313d; --text:#e6e9ef; --muted:#8b94a3; --accent:#5b9dff; }
   * { box-sizing: border-box; }
@@ -45,8 +45,8 @@
 <body>
 
 <header>
-  <h1>Image → Markdown</h1>
-  <span class="muted">Drop or paste an image; vision LLM extracts a Markdown table.</span>
+  <h1>Image → Markdown / Description</h1>
+  <span class="muted">Drop or paste an image; vision LLM extracts a Markdown table or describes a figure.</span>
   <span style="margin-left:auto" class="pill" id="ollama-pill">Ollama: checking…</span>
 </header>
 
@@ -60,17 +60,29 @@
 
     <div class="panel col" style="flex:0 0 auto; gap:8px;">
       <div class="row">
+        <label>Mode:</label>
+        <select id="mode">
+          <option value="table">Table → Markdown</option>
+          <option value="figure_generic">Figure (generic)</option>
+          <option value="figure_schematic">Figure — schematic</option>
+          <option value="figure_block_diagram">Figure — block diagram</option>
+          <option value="figure_mechanical">Figure — mechanical</option>
+          <option value="figure_pinout">Figure — pinout</option>
+        </select>
         <label>Model:</label>
         <select id="model"></select>
         <button id="refresh-models" title="Re-query Ollama for installed models">↻</button>
-        <label style="margin-left:auto">Caption (optional):</label>
-        <input type="text" id="caption" placeholder="e.g. Table 17 — Pinout" style="flex:1; min-width: 160px;">
+      </div>
+      <div class="row">
+        <label>Caption (optional):</label>
+        <input type="text" id="caption" placeholder="e.g. Table 17 — Pinout, or Figure 3 — System block diagram" style="flex:1; min-width: 160px;">
       </div>
     </div>
 
     <div class="panel col" style="flex:1; min-height:120px;">
       <div class="row">
         <strong>Prompt</strong>
+        <span class="muted" id="prompt-mode-label" style="margin-left:6px;"></span>
         <button id="reset-prompt" style="margin-left:auto">Reset to default</button>
       </div>
       <textarea id="prompt" spellcheck="false"></textarea>
@@ -102,8 +114,10 @@
 <script>
 "use strict";
 
-// ---- Default prompt — kept in sync with parse_pdf.py:_TABLE_VISION_PROMPT ----
-const DEFAULT_PROMPT = `Extract this table EXACTLY as it appears in the image.
+// ---- Default prompts — kept in sync with parse_pdf.py.
+// Table prompt = _TABLE_VISION_PROMPT; figure prompts = _PROMPTS_BY_TYPE.
+const DEFAULT_PROMPTS = {
+  table: `Extract this table EXACTLY as it appears in the image.
 Output as a GitHub Flavored Markdown table.
 
 STRICT RULES:
@@ -119,7 +133,68 @@ STRICT RULES:
 - Preserve subscripts and superscripts as plain text (e.g. tPD, VDD, °C, ±, μ).
 - Footnote markers like [a], [b], [e] are part of the cell text — keep them attached.
 - If a column header in the image is a unit (e.g. "Unit"), keep it.
-- Output ONLY the markdown table (header row, separator row, body rows). No commentary, no preamble, no code fences, no explanation after.`;
+- Output ONLY the markdown table (header row, separator row, body rows). No commentary, no preamble, no code fences, no explanation after.`,
+
+  figure_generic: `You are looking at a figure from a hardware/embedded-systems datasheet.
+
+Write a concise description (5–10 sentences) for an engineer who cannot see the image. Be factual. Cover, when visible:
+- The kind of figure (block diagram, schematic, pinout, mechanical drawing, photo, table, icon, etc.).
+- The main components/blocks (chip names, modules, connectors).
+- Every signal/net/label name you can read (list them verbatim, even partial).
+- How blocks are connected (which signals go where), if relevant.
+- Power rails, voltages, ground, units, dimensions when shown.
+
+Do not invent details. If text is unreadable, say so. Output plain text only — no Markdown headings, no preamble like "This figure shows".`,
+
+  figure_schematic: `You are looking at a schematic / connection diagram from a hardware datasheet.
+
+For an engineer who cannot see the image, list:
+- Every component / chip / block by its label (e.g. "RT1170", "LPSDRAM").
+- Every signal name visible (verbatim, including bus widths like A[12:0]).
+- Every connection: "<source pin> → <destination pin>".
+- Power rails and ground nets (e.g. VCC1V8, VDD, VSS).
+
+Output as plain text. No headings, no preamble. Do not invent connections that are not visible. If unsure, say so.`,
+
+  figure_block_diagram: `You are looking at a block diagram from a hardware datasheet.
+
+For an engineer who cannot see the image, describe:
+- Every named block (verbatim).
+- Arrows / interfaces between blocks (which block talks to which, and via which interface label if shown — e.g. "I2C", "SPI", "SEMC").
+- External connectors or boundaries shown.
+- Any colour-coding or grouping (e.g. green = pads, dashed = optional).
+
+Output plain text only. No headings, no preamble. Do not invent links that are not visible.`,
+
+  figure_mechanical: `You are looking at a mechanical / dimensional drawing from a hardware datasheet.
+
+For an engineer who cannot see the image, describe:
+- The view (top, side, bottom, isometric, section A-A, etc.).
+- Every dimension callout letter visible (A, B, C, C1, D1, …) and what it measures spatially. Be precise about the two surfaces or features each callout spans (e.g. "B is the thickness of the PCB layer between the top copper and bottom copper").
+- The vertical stack-up of layers if shown (e.g. carrier-board → solder → module PCB → CPU → capacitors).
+- Any numeric values or tolerances printed on the drawing.
+
+Output plain text only. No headings, no preamble. Do not invent dimensions that are not visible. If a callout letter exists but its position is unclear, say so explicitly.`,
+
+  figure_pinout: `You are looking at a pinout / package drawing from a hardware datasheet.
+
+For an engineer who cannot see the image, describe:
+- The package type (BGA, LGA, QFP, etc.) and ball/pin count if shown.
+- The orientation marker (pin 1 indicator).
+- Row/column labelling scheme (letters A, B, ... and numbers 1, 2, ...).
+- Notable named pins or pin groups visible.
+
+Output plain text only. No headings, no preamble. Do not invent pin names.`,
+};
+
+const MODE_LABELS = {
+  table: "table → Markdown",
+  figure_generic: "figure (generic)",
+  figure_schematic: "figure — schematic",
+  figure_block_diagram: "figure — block diagram",
+  figure_mechanical: "figure — mechanical",
+  figure_pinout: "figure — pinout",
+};
 
 const OLLAMA = "http://localhost:11434";
 const $ = (id) => document.getElementById(id);
@@ -130,19 +205,53 @@ const dropEl   = $("drop");
 const previewEl = $("preview");
 const modelEl  = $("model");
 const captionEl = $("caption");
+const modeEl   = $("mode");
+const modeLabelEl = $("prompt-mode-label");
 const pill     = $("ollama-pill");
 
 let currentImage = null;       // { dataURL, name, base64 }
 let abortCtrl = null;
+let currentMode = localStorage.getItem("mode") || "table";
 
-// ---- Init ----
-promptEl.value = localStorage.getItem("prompt") || DEFAULT_PROMPT;
-promptEl.addEventListener("input", () => localStorage.setItem("prompt", promptEl.value));
+// ---- Mode + prompt persistence (one stored prompt per mode) ----
+function promptKey(mode) { return `prompt:${mode}`; }
+
+function loadPromptForMode(mode) {
+  const stored = localStorage.getItem(promptKey(mode));
+  return stored != null ? stored : DEFAULT_PROMPTS[mode];
+}
+
+function applyMode(mode, { savePrev = true } = {}) {
+  if (savePrev) {
+    // Persist whatever is currently in the textbox under the OLD mode.
+    localStorage.setItem(promptKey(currentMode), promptEl.value);
+  }
+  currentMode = mode;
+  localStorage.setItem("mode", mode);
+  modeEl.value = mode;
+  modeLabelEl.textContent = `(${MODE_LABELS[mode]})`;
+  promptEl.value = loadPromptForMode(mode);
+}
+
+modeEl.addEventListener("change", () => applyMode(modeEl.value));
+promptEl.addEventListener("input", () => {
+  localStorage.setItem(promptKey(currentMode), promptEl.value);
+});
 
 $("reset-prompt").addEventListener("click", () => {
-  promptEl.value = DEFAULT_PROMPT;
-  localStorage.setItem("prompt", DEFAULT_PROMPT);
+  promptEl.value = DEFAULT_PROMPTS[currentMode];
+  localStorage.setItem(promptKey(currentMode), promptEl.value);
 });
+
+// One-time migration: prior versions stored a single "prompt" key.
+const legacy = localStorage.getItem("prompt");
+if (legacy != null && localStorage.getItem(promptKey("table")) == null) {
+  localStorage.setItem(promptKey("table"), legacy);
+  localStorage.removeItem("prompt");
+}
+
+// Initial load.
+applyMode(currentMode, { savePrev: false });
 
 // ---- Models ----
 async function loadModels() {
@@ -225,8 +334,15 @@ $("cancel").addEventListener("click", () => { if (abortCtrl) abortCtrl.abort(); 
 async function run() {
   if (!currentImage) { statusEl.textContent = "Pick an image first."; return; }
   let prompt = promptEl.value;
-  if (captionEl.value.trim()) {
-    prompt += `\n\nThe table caption (for context only) is: ${captionEl.value.trim()}`;
+  const cap = captionEl.value.trim();
+  if (cap) {
+    // Match the script: tables use a "(for context only)" framing, figure
+    // prompts in _build_figure_prompt just append "Caption: …".
+    if (currentMode === "table") {
+      prompt += `\n\nThe table caption (for context only) is: ${cap}`;
+    } else {
+      prompt += `\n\nCaption: ${cap}`;
+    }
   }
 
   outputEl.value = "";
