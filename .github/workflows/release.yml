@@ -21,7 +21,11 @@ jobs:
             label: macos-arm64
             artifact: parse-pdf-gui-macos-arm64.zip
             kind: mac
-          - os: macos-13
+          # macos-13-large is also Intel x86_64 (12 vCPU / 30 GB) but lives
+          # in a much less-saturated runner pool than plain macos-13 — the
+          # standard macos-13 pool is chronically queued for 30+ minutes.
+          # Both are free for public repos.
+          - os: macos-13-large
             label: macos-x86_64
             artifact: parse-pdf-gui-macos-x86_64.zip
             kind: mac
