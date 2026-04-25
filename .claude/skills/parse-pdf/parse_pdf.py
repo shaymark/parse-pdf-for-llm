@@ -700,11 +700,14 @@ _TABLE_VISION_PROMPT = """Extract this table EXACTLY as it appears in the image.
 Output as a GitHub Flavored Markdown table.
 
 STRICT RULES:
+- COLUMN COUNT IS FIXED: Before writing anything, count the visible columns of the table. Every row you emit (header, separator, every body row) MUST have EXACTLY that number of `|`-separated cells. NEVER skip a column. If the row count doesn't match, redo it.
 - The header row of the markdown table MUST be the visible column headers from the image.
+- GRID LAYOUTS (BGA pinouts, package ballouts, matrix tables): If the image is a 2-D grid where ROWS are numbered (1, 2, 3, …) along one edge and COLUMNS are lettered (A, B, C, …) along the other edge, the letters are the column headers and the numbers are the first column of each row. The letter row is a header even when it is drawn at the BOTTOM of the image — emit it as the FIRST row of the markdown table.
 - Output one markdown row per visible body row. Do not skip or merge rows.
 - VERTICAL MERGES: A cell whose text visually spans MULTIPLE body rows (one piece of text centered across several rows, with NO horizontal line separating those rows in that column) is a vertical merge. Markdown cannot express vertical merges, so REPEAT that exact text in EVERY row the merge covers. Example: if the "Note" cell shows "Use with populated Trust Secure Element" centered across 7 rows of signals, every one of those 7 rows must have "Use with populated Trust Secure Element" in its Note column.
 - HORIZONTALLY MERGED HEADERS: If a header cell spans multiple data columns (e.g. a single "Air Flow (m/s)" header above three data columns 0/1/2.5), put the spanning text in the FIRST column of the header row and leave the other spanned header cells empty.
 - TRULY EMPTY CELLS: A cell with no text at all (not part of a merge) must be empty in the output. Never copy a value from a neighbouring cell to fill a genuinely empty cell. Distinguish carefully between "merged" (one text covering many rows — repeat) and "empty" (no text — leave empty).
+- DEPOPULATED / N/A CELLS: A cell containing only a diagonal slash (/), an "X", a dash (—), or a blank-with-shading is an intentionally-empty position (e.g. a depopulated BGA ball). Emit it as an EMPTY cell `|  |` — do NOT omit the cell, do NOT shift later cells left. The column count rule above is non-negotiable.
 - Do NOT invent columns. Do NOT add a "Notes" or "Comments" column.
 - Preserve subscripts and superscripts as plain text (e.g. tPD, VDD, °C, ±, μ).
 - Footnote markers like [a], [b], [e] are part of the cell text — keep them attached.
@@ -731,7 +734,15 @@ def vision_extract_table(image_path: Path, *, caption: str | None = None,
     resp = ollama.chat(
         model=model,
         messages=[{"role": "user", "content": prompt, "images": [str(image_path)]}],
-        options={"temperature": 0.1},
+        options={
+            "temperature": 0.1,
+            # Ollama defaults are tiny: num_predict=128 (truncates after
+            # ≈10 short table rows) and num_ctx=2048 (overflows once the
+            # image + this long prompt fill the window). Bump both so
+            # long tables aren't silently cut off mid-row.
+            "num_predict": 8192,
+            "num_ctx": 16384,
+        },
     )
     return resp["message"]["content"].strip()
 
@@ -1096,7 +1107,14 @@ def describe_figure(image_path: Path, *, caption: str | None = None,
     resp = ollama.chat(
         model=model,
         messages=[{"role": "user", "content": prompt, "images": [str(image_path)]}],
-        options={"temperature": 0.2},
+        options={
+            "temperature": 0.2,
+            # Same rationale as vision_extract_table — long figure
+            # descriptions (especially block-diagram-style figures with
+            # many labelled subblocks) hit the default 128-token cap.
+            "num_predict": 4096,
+            "num_ctx": 16384,
+        },
     )
     return resp["message"]["content"].strip()
 
