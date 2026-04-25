@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Image → Markdown (Ollama)</title>
+<style>
+  :root { --bg:#0f1115; --panel:#161a22; --border:#2a313d; --text:#e6e9ef; --muted:#8b94a3; --accent:#5b9dff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); display: flex; gap: 14px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .muted { color: var(--muted); font-size: 12px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px; height: calc(100vh - 52px); }
+  .col { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row label { color: var(--muted); font-size: 12px; }
+  select, input[type=text] { background: #0c0f15; color: var(--text); border: 1px solid var(--border);
+                              border-radius: 6px; padding: 6px 8px; font: inherit; }
+  button { background: #1f2733; color: var(--text); border: 1px solid var(--border);
+           border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0a0d12; border-color: transparent; font-weight: 600; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  textarea { width: 100%; flex: 1; min-height: 0; resize: none;
+             background: #0c0f15; color: var(--text); border: 1px solid var(--border);
+             border-radius: 6px; padding: 10px; font: 12px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 20px; text-align: center;
+          color: var(--muted); transition: all .15s; cursor: pointer; }
+  #drop.hover { border-color: var(--accent); background: rgba(91,157,255,0.08); color: var(--text); }
+  #preview-wrap { flex: 1; min-height: 0; overflow: auto; background: #0c0f15;
+                  border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex;
+                  align-items: center; justify-content: center; }
+  #preview { max-width: 100%; max-height: 100%; display: block; }
+  #status { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-block; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px;
+          color: var(--muted); font-size: 11px; }
+  .pill.live { color: #6dd06d; border-color: #2c5a2c; }
+  .pill.err { color: #ff6e6e; border-color: #5a2c2c; }
+  details { color: var(--muted); font-size: 12px; }
+  details summary { cursor: pointer; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Image → Markdown</h1>
+  <span class="muted">Drop or paste an image; vision LLM extracts a Markdown table.</span>
+  <span style="margin-left:auto" class="pill" id="ollama-pill">Ollama: checking…</span>
+</header>
+
+<main>
+  <!-- LEFT: image + prompt -->
+  <section class="col">
+    <div id="drop" class="panel" tabindex="0">
+      Drop a PNG / JPG here, paste from clipboard (⌘V / Ctrl+V), or click to browse.
+    </div>
+    <div id="preview-wrap"><img id="preview" alt="" /></div>
+
+    <div class="panel col" style="flex:0 0 auto; gap:8px;">
+      <div class="row">
+        <label>Model:</label>
+        <select id="model"></select>
+        <button id="refresh-models" title="Re-query Ollama for installed models">↻</button>
+        <label style="margin-left:auto">Caption (optional):</label>
+        <input type="text" id="caption" placeholder="e.g. Table 17 — Pinout" style="flex:1; min-width: 160px;">
+      </div>
+    </div>
+
+    <div class="panel col" style="flex:1; min-height:120px;">
+      <div class="row">
+        <strong>Prompt</strong>
+        <button id="reset-prompt" style="margin-left:auto">Reset to default</button>
+      </div>
+      <textarea id="prompt" spellcheck="false"></textarea>
+    </div>
+  </section>
+
+  <!-- RIGHT: output -->
+  <section class="col">
+    <div class="panel row">
+      <button id="run" class="primary">Run</button>
+      <button id="cancel" disabled>Cancel</button>
+      <button id="copy">Copy</button>
+      <button id="save">Save .md</button>
+      <span id="status">Ready.</span>
+    </div>
+    <div class="panel col" style="flex:1; min-height:0;">
+      <div class="row"><strong>Output (Markdown)</strong></div>
+      <textarea id="output" spellcheck="false" placeholder="The model's Markdown will stream here…"></textarea>
+    </div>
+    <details class="panel">
+      <summary>If "Failed to fetch" — Ollama is blocking CORS</summary>
+      <p>Browsers refuse cross-origin requests by default. Restart Ollama with CORS allowed for any origin:</p>
+      <pre style="background:#0c0f15;border:1px solid var(--border);padding:8px;border-radius:6px;overflow:auto"><code>OLLAMA_ORIGINS='*' ollama serve</code></pre>
+      <p>Or for just this file: <code>OLLAMA_ORIGINS='null' ollama serve</code> (the origin shown when you double-click the .html).</p>
+    </details>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// ---- Default prompt — kept in sync with parse_pdf.py:_TABLE_VISION_PROMPT ----
+const DEFAULT_PROMPT = `Extract this table EXACTLY as it appears in the image.
+Output as a GitHub Flavored Markdown table.
+
+STRICT RULES:
+- The header row of the markdown table MUST be the visible column headers from the image.
+- Output one markdown row per visible body row. Do not skip or merge rows.
+- VERTICAL MERGES: A cell whose text visually spans MULTIPLE body rows (one piece of text centered across several rows, with NO horizontal line separating those rows in that column) is a vertical merge. Markdown cannot express vertical merges, so REPEAT that exact text in EVERY row the merge covers. Example: if the "Note" cell shows "Use with populated Trust Secure Element" centered across 7 rows of signals, every one of those 7 rows must have "Use with populated Trust Secure Element" in its Note column.
+- HORIZONTALLY MERGED HEADERS: If a header cell spans multiple data columns (e.g. a single "Air Flow (m/s)" header above three data columns 0/1/2.5), put the spanning text in the FIRST column of the header row and leave the other spanned header cells empty.
+- TRULY EMPTY CELLS: A cell with no text at all (not part of a merge) must be empty in the output. Never copy a value from a neighbouring cell to fill a genuinely empty cell. Distinguish carefully between "merged" (one text covering many rows — repeat) and "empty" (no text — leave empty).
+- Do NOT invent columns. Do NOT add a "Notes" or "Comments" column.
+- Preserve subscripts and superscripts as plain text (e.g. tPD, VDD, °C, ±, μ).
+- Footnote markers like [a], [b], [e] are part of the cell text — keep them attached.
+- If a column header in the image is a unit (e.g. "Unit"), keep it.
+- Output ONLY the markdown table (header row, separator row, body rows). No commentary, no preamble, no code fences, no explanation after.`;
+
+const OLLAMA = "http://localhost:11434";
+const $ = (id) => document.getElementById(id);
+const promptEl = $("prompt");
+const outputEl = $("output");
+const statusEl = $("status");
+const dropEl   = $("drop");
+const previewEl = $("preview");
+const modelEl  = $("model");
+const captionEl = $("caption");
+const pill     = $("ollama-pill");
+
+let currentImage = null;       // { dataURL, name, base64 }
+let abortCtrl = null;
+
+// ---- Init ----
+promptEl.value = localStorage.getItem("prompt") || DEFAULT_PROMPT;
+promptEl.addEventListener("input", () => localStorage.setItem("prompt", promptEl.value));
+
+$("reset-prompt").addEventListener("click", () => {
+  promptEl.value = DEFAULT_PROMPT;
+  localStorage.setItem("prompt", DEFAULT_PROMPT);
+});
+
+// ---- Models ----
+async function loadModels() {
+  pill.className = "pill"; pill.textContent = "Ollama: checking…";
+  try {
+    const r = await fetch(`${OLLAMA}/api/tags`);
+    if (!r.ok) throw new Error(r.status);
+    const data = await r.json();
+    const names = (data.models || []).map(m => m.name).filter(Boolean).sort();
+    if (!names.length) throw new Error("no models");
+    // Prefer vision models first
+    const preferred = names.filter(n => /vl|vision/i.test(n));
+    const rest = names.filter(n => !preferred.includes(n));
+    const ordered = [...preferred, ...rest];
+    modelEl.innerHTML = ordered.map(n => `<option value="${n}">${n}</option>`).join("");
+    const saved = localStorage.getItem("model");
+    if (saved && ordered.includes(saved)) modelEl.value = saved;
+    pill.className = "pill live";
+    pill.textContent = `Ollama: ${ordered.length} model${ordered.length>1?'s':''}`;
+  } catch (e) {
+    pill.className = "pill err";
+    pill.textContent = "Ollama: not reachable";
+    modelEl.innerHTML = `<option value="qwen2.5vl:7b">qwen2.5vl:7b</option>`;
+  }
+}
+modelEl.addEventListener("change", () => localStorage.setItem("model", modelEl.value));
+$("refresh-models").addEventListener("click", loadModels);
+loadModels();
+
+// ---- Image input: drag, paste, click ----
+function setImageFromDataURL(dataURL, name) {
+  currentImage = {
+    dataURL, name: name || "image.png",
+    base64: dataURL.replace(/^data:[^;]+;base64,/, ""),
+  };
+  previewEl.src = dataURL;
+  statusEl.textContent = `Loaded ${currentImage.name}`;
+}
+
+function handleFile(file) {
+  if (!file || !file.type.startsWith("image/")) {
+    statusEl.textContent = "Not an image."; return;
+  }
+  const r = new FileReader();
+  r.onload = () => setImageFromDataURL(r.result, file.name);
+  r.readAsDataURL(file);
+}
+
+["dragenter","dragover"].forEach(ev => dropEl.addEventListener(ev, e => {
+  e.preventDefault(); dropEl.classList.add("hover");
+}));
+["dragleave","drop"].forEach(ev => dropEl.addEventListener(ev, e => {
+  e.preventDefault(); dropEl.classList.remove("hover");
+}));
+dropEl.addEventListener("drop", e => {
+  const f = e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+dropEl.addEventListener("click", () => {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "image/*";
+  inp.onchange = () => handleFile(inp.files[0]);
+  inp.click();
+});
+
+document.addEventListener("paste", e => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const it of items) {
+    if (it.type && it.type.startsWith("image/")) {
+      const f = it.getAsFile(); if (f) { handleFile(f); e.preventDefault(); break; }
+    }
+  }
+});
+
+// ---- Run / cancel ----
+$("run").addEventListener("click", run);
+$("cancel").addEventListener("click", () => { if (abortCtrl) abortCtrl.abort(); });
+
+async function run() {
+  if (!currentImage) { statusEl.textContent = "Pick an image first."; return; }
+  let prompt = promptEl.value;
+  if (captionEl.value.trim()) {
+    prompt += `\n\nThe table caption (for context only) is: ${captionEl.value.trim()}`;
+  }
+
+  outputEl.value = "";
+  statusEl.textContent = "Sending to Ollama…";
+  $("run").disabled = true; $("cancel").disabled = false;
+
+  abortCtrl = new AbortController();
+  let firstChunkAt = 0, t0 = performance.now();
+
+  try {
+    const r = await fetch(`${OLLAMA}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: abortCtrl.signal,
+      body: JSON.stringify({
+        model: modelEl.value,
+        messages: [{ role: "user", content: prompt, images: [currentImage.base64] }],
+        stream: true,
+        options: { temperature: 0.1 },
+      }),
+    });
+    if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`);
+
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      // Ollama streams newline-delimited JSON
+      let idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, idx).trim(); buf = buf.slice(idx + 1);
+        if (!line) continue;
+        let obj;
+        try { obj = JSON.parse(line); } catch { continue; }
+        const piece = (obj.message && obj.message.content) || "";
+        if (piece) {
+          if (!firstChunkAt) firstChunkAt = performance.now();
+          outputEl.value += piece;
+          outputEl.scrollTop = outputEl.scrollHeight;
+        }
+        if (obj.done) {
+          const dur = ((performance.now() - t0) / 1000).toFixed(1);
+          statusEl.textContent = `Done in ${dur}s.`;
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      statusEl.textContent = "Cancelled.";
+    } else {
+      statusEl.textContent = `Failed: ${e.message}. Is Ollama running with OLLAMA_ORIGINS='*'?`;
+    }
+  } finally {
+    $("run").disabled = false; $("cancel").disabled = true;
+    abortCtrl = null;
+  }
+}
+
+// ---- Output utils ----
+$("copy").addEventListener("click", async () => {
+  if (!outputEl.value) return;
+  try {
+    await navigator.clipboard.writeText(outputEl.value);
+    statusEl.textContent = "Copied to clipboard.";
+  } catch (e) {
+    outputEl.select(); document.execCommand("copy");
+    statusEl.textContent = "Copied (fallback).";
+  }
+});
+
+$("save").addEventListener("click", () => {
+  const text = outputEl.value;
+  if (!text) { statusEl.textContent = "Nothing to save."; return; }
+  const base = (currentImage && currentImage.name)
+    ? currentImage.name.replace(/\.[^.]+$/, "")
+    : "table";
+  const blob = new Blob([text], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${base}.md`;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+  statusEl.textContent = `Saved ${base}.md`;
+});
+
+// Cmd/Ctrl+Enter to run
+document.addEventListener("keydown", e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); run(); }
+});
+</script>
+</body>
+</html>
