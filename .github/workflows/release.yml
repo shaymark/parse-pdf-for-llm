@@ -21,14 +21,13 @@ jobs:
             label: macos-arm64
             artifact: parse-pdf-gui-macos-arm64.zip
             kind: mac
-          # macos-13-large is also Intel x86_64 (12 vCPU / 30 GB) but lives
-          # in a much less-saturated runner pool than plain macos-13 — the
-          # standard macos-13 pool is chronically queued for 30+ minutes.
-          # Both are free for public repos.
-          - os: macos-13-large
-            label: macos-x86_64
-            artifact: parse-pdf-gui-macos-x86_64.zip
-            kind: mac
+          # NOTE: x86_64 macOS builds were dropped in v0.2.2 — both
+          # GitHub-hosted Intel runners (macos-13 and macos-13-large)
+          # are chronically queue-saturated for free public repos
+          # (4+ hour wait observed on consecutive releases). Apple Silicon
+          # macOS users get parse-pdf-gui-macos-arm64.zip; Intel Mac users
+          # can run that under Rosetta 2, or fall back to the pip install
+          # path documented in the README.
           - os: ubuntu-22.04
             label: linux-x86_64
             artifact: parse-pdf-gui-linux-x86_64.tar.gz

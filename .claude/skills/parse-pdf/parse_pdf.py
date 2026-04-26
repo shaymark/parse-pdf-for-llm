@@ -203,7 +203,19 @@ def _detect_table_bboxes(page: pymupdf.Page) -> list[pymupdf.Rect]:
         finder = page.find_tables()
     except Exception:
         return []
-    rects = [pymupdf.Rect(*t.bbox) for t in getattr(finder, "tables", [])]
+    rects: list[pymupdf.Rect] = []
+    for t in getattr(finder, "tables", []):
+        # PyMuPDF can occasionally return a Table object whose cells list
+        # is empty (some borderless / single-cell layouts trigger it).
+        # Accessing .bbox in that case raises ValueError: min() arg is
+        # empty. Skip such tables instead of crashing the whole page.
+        try:
+            bbox = t.bbox
+        except (ValueError, AttributeError):
+            continue
+        if bbox is None:
+            continue
+        rects.append(pymupdf.Rect(*bbox))
     rects.sort(key=lambda r: r.y0)
     return rects
 

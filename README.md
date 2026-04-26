@@ -38,7 +38,7 @@ from the [latest release](https://github.com/shaymark/parse-pdf-for-llm/releases
 | OS | Download |
 |---|---|
 | macOS (Apple Silicon) | `parse-pdf-gui-macos-arm64.zip` |
-| macOS (Intel) | `parse-pdf-gui-macos-x86_64.zip` |
+| macOS (Intel) | run the arm64 build under Rosetta 2, or use the pip install path below |
 | Linux (x86_64) | `parse-pdf-gui-linux-x86_64.tar.gz` |
 | Windows (x86_64) | `parse-pdf-gui-windows-x86_64.zip` |
 
