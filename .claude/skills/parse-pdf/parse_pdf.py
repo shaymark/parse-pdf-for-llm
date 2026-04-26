@@ -220,6 +220,131 @@ def _detect_table_bboxes(page: pymupdf.Page) -> list[pymupdf.Rect]:
     return rects
 
 
+_OMITTED_PIC_RE = re.compile(
+    r"==>\s*picture\s*\[\s*(\d+)\s*x\s*(\d+)\s*\]\s*intentionally\s*omitted\s*<=="
+)
+_HEADING_RE = re.compile(r"^\s*(#+)\s*\**\s*(.+?)\s*\**\s*$")
+
+
+def _strip_md_inline(s: str) -> str:
+    """Strip Markdown bold/italic/code markers, leaving readable text."""
+    s = re.sub(r"<br\s*/?>", " ", s)
+    s = re.sub(r"`+", "", s)
+    s = re.sub(r"\*+", "", s)
+    s = re.sub(r"_+", "", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _find_anchor_y(page: pymupdf.Page, lines: list[str], idx: int,
+                   *, direction: int) -> float | None:
+    """Find the y-coordinate of the nearest text line on the page.
+
+    Walks `lines` from `idx` in `direction` (-1 = upwards, +1 = downwards),
+    looks each line up via page.search_for(...), and returns the best
+    matching y (y1 for upwards, y0 for downwards). Skips the picture
+    marker itself, the picture-text dump (which doesn't survive intact on
+    the page), blank lines, and pure heading-decorations.
+    """
+    n = len(lines)
+    j = idx + direction
+    while 0 <= j < n:
+        raw = lines[j].strip()
+        # Skip blank / decoration / picture-text wrappers / other markers.
+        if not raw or raw == "<br>" or "----- Start of picture text" in raw \
+                or "----- End of picture text" in raw \
+                or _OMITTED_PIC_RE.search(raw):
+            j += direction
+            continue
+        text = _strip_md_inline(raw)
+        # Heading: drop the leading hash markers.
+        text = re.sub(r"^#+\s*", "", text)
+        if len(text) < 3:
+            j += direction
+            continue
+        # Try the full line first, then a shorter prefix (long lines often
+        # wrap on the page so the full string isn't searchable).
+        for candidate in (text, text[:60], text[:40]):
+            try:
+                rects = page.search_for(candidate)
+            except Exception:
+                rects = []
+            if rects:
+                rects.sort(key=lambda r: r.y0)
+                return rects[-1].y1 if direction < 0 else rects[0].y0
+        j += direction
+    return None
+
+
+def _detect_omitted_pictures(md: str, page: pymupdf.Page) -> list[dict]:
+    """Find pymupdf4llm 'intentionally omitted' picture placeholders.
+
+    pymupdf4llm emits these for Form-XObject figures it can't convert to
+    Markdown — block diagrams, schematics, vector charts, etc. PyMuPDF's
+    `get_images()` / `get_drawings()` don't expose them either.
+
+    Strategy:
+      1. Read W×H out of the marker — that's the picture's exact size in
+         PDF points.
+      2. Anchor the top of the crop to the y of the last real text line
+         BEFORE the marker (heading or paragraph), found via search_for.
+      3. Bottom = top + H + small margin (use the marker's own height,
+         not "all the way to the page footer", which is what made early
+         crops swallow whole pages).
+      4. If the line before the marker is a "## Heading", remember it as
+         the human caption for the figure.
+
+    Returns a list of {heading, clip, line} dicts, one per marker.
+    """
+    lines = md.splitlines()
+    out: list[dict] = []
+    last_heading = ""
+    for i, line in enumerate(lines):
+        hm = _HEADING_RE.match(line)
+        if hm:
+            last_heading = re.sub(r"\s+", " ", hm.group(2)).strip(" :*")
+            continue
+        m = _OMITTED_PIC_RE.search(line)
+        if not m:
+            continue
+        pic_w_pt = int(m.group(1))
+        pic_h_pt = int(m.group(2))
+
+        # Find the y of the last real text line above the marker.
+        top_anchor = _find_anchor_y(page, lines, i, direction=-1)
+        if top_anchor is None:
+            # No anchor found on this page — fall back to just-below-header.
+            top_anchor = page.rect.y0 + 50
+
+        # Visible breathing room around the cropped figure on all four
+        # sides. ~15 PDF points ≈ 42 pixels at 200 DPI.
+        pad = 15
+
+        top = top_anchor + pad
+        # Use the picture height to bound the crop, plus padding.
+        bottom = top + pic_h_pt + pad
+
+        # Don't run off the page; if we did, the marker's H is wrong (or
+        # the layout was rotated) — fall back to the next anchor below.
+        if bottom > page.rect.y1 - 20:
+            below = _find_anchor_y(page, lines, i, direction=+1)
+            if below is not None:
+                bottom = below - pad
+            else:
+                bottom = page.rect.y1 - 30
+
+        clip = pymupdf.Rect(
+            page.rect.x0 + pad,
+            top - pad,
+            page.rect.x1 - pad,
+            bottom + pad,
+        ) & page.rect
+        # Reject silly clips (heading at bottom of page, picture H wrong).
+        if clip.height < 40 or clip.width < 60:
+            continue
+        out.append({"heading": last_heading, "clip": clip, "line": i})
+    return out
+
+
 def _pair_captions_with_bboxes(captions: list[dict],
                                bboxes: list[pymupdf.Rect]) -> list[pymupdf.Rect | None]:
     """For each table caption, return the closest table bbox below it (or None).
@@ -346,6 +471,7 @@ def extract_page(doc: pymupdf.Document, page_num_1based: int, out_dir: Path,
     margin_top = 6
     fallback_bottom = 40
     fig_seq = 0
+    matched_fig_caption_ids: set[int] = set()  # id() of caption dicts hit by a raster
     for img in page.get_images(full=True):
         xref = img[0]
         if skip_xrefs and xref in skip_xrefs:
@@ -360,6 +486,7 @@ def extract_page(doc: pymupdf.Document, page_num_1based: int, out_dir: Path,
             if cap:
                 bottom = cap["rect"].y1 + 4
                 base = f"figure_{cap['number']:02d}_{_slugify(cap['title'])}"
+                matched_fig_caption_ids.add(id(cap))
             else:
                 bottom = rect.y1 + fallback_bottom
                 base = f"page_{page_num_1based:03d}_fig_{fig_seq:02d}"
@@ -383,6 +510,42 @@ def extract_page(doc: pymupdf.Document, page_num_1based: int, out_dir: Path,
                 })
             except Exception as e:
                 figures.append({"file": None, "error": str(e)})
+
+    # 4b. Pymupdf4llm-omitted pictures fallback.
+    # When pymupdf4llm sees a Form XObject / vector group it can't convert
+    # to markdown, it leaves a `**==> picture [WxH] intentionally omitted
+    # <==**` placeholder with the picture's text glyphs dumped between
+    # Start/End markers. PyMuPDF's get_images() / get_drawings() can't
+    # find those (they live in a Form XObject, not the page's main
+    # content stream), so the script previously ignored them and the
+    # vision LLM never saw the figure. Detect the marker, look up the
+    # nearest preceding heading, and render the page region from below
+    # the heading to the start of the picture-text dump.
+    omitted = _detect_omitted_pictures(md_clean, page)
+    for entry in omitted:
+        # Skip if a raster figure already covers this region (caption-matched).
+        slug = _slugify(entry["heading"]) or f"picture_{fig_seq + 1:02d}"
+        base = f"figure_p{page_num_1based:03d}_{slug[:50]}"
+        name = f"{base}.png"
+        if name in used_fig_names:
+            fig_seq += 1
+            name = f"{base}_{fig_seq}.png"
+        used_fig_names.add(name)
+        clip = entry["clip"]
+        try:
+            pix = page.get_pixmap(clip=clip, dpi=200, alpha=False)
+            pix.save(out_dir / name)
+            pix = None
+            figures.append({
+                "file": name,
+                "page": page_num_1based,
+                "printed_page": printed_page,
+                "figure_number": None,
+                "caption": entry["heading"] or "Picture",
+                "kind": "omitted_picture",
+            })
+        except Exception as e:
+            figures.append({"file": None, "error": str(e), "caption": entry["heading"]})
 
     table_captions = [c for c in captions if c["type"] == "table"]
     table_bboxes = _detect_table_bboxes(page)
